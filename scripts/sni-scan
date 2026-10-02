@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+#
+# sni-scan.sh — find IPs / SNI domains for a given domain across cloud provider
+# IP-range dumps (Amazon, DigitalOcean, Google, Microsoft, Oracle).
+#
+set -euo pipefail
+
+CACHE_DIR="/opt/zb/wordlists/sni-ip-ranges"
+
+declare -A URLS=(
+    [amazon]="https://kaeferjaeger.gay/sni-ip-ranges/amazon/ipv4_merged_sni.txt"
+    [digitalocean]="https://kaeferjaeger.gay/sni-ip-ranges/digitalocean/ipv4_merged_sni.txt"
+    [google]="https://kaeferjaeger.gay/sni-ip-ranges/google/ipv4_merged_sni.txt"
+    [microsoft]="https://kaeferjaeger.gay/sni-ip-ranges/microsoft/ipv4_merged_sni.txt"
+    [oracle]="https://kaeferjaeger.gay/sni-ip-ranges/oracle/ipv4_merged_sni.txt"
+)
+
+# ---------------------------------------------------------------------------
+# Colors (auto-disabled when not a tty or when NO_COLOR is set)
+# ---------------------------------------------------------------------------
+if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+    C_RESET=$'\033[0m'
+    C_BOLD=$'\033[1m'
+    C_DIM=$'\033[2m'
+    C_RED=$'\033[31m'
+    C_GREEN=$'\033[32m'
+    C_YELLOW=$'\033[33m'
+    C_BLUE=$'\033[34m'
+    C_CYAN=$'\033[36m'
+else
+    C_RESET="" C_BOLD="" C_DIM="" C_RED="" C_GREEN="" C_YELLOW="" C_BLUE="" C_CYAN=""
+fi
+
+info()  { printf '%s[*]%s %s\n'  "$C_CYAN"  "$C_RESET" "$1"; }
+ok()    { printf '%s[+]%s %s\n'  "$C_GREEN" "$C_RESET" "$1"; }
+warn()  { printf '%s[!]%s %s\n'  "$C_YELLOW" "$C_RESET" "$1"; }
+err()   { printf '%s[x]%s %s\n'  "$C_RED"   "$C_RESET" "$1" >&2; }
+
+hr() { printf '%s\n' "${C_DIM}────────────────────────────────────────────────────────${C_RESET}"; }
+
+usage() {
+    cat <<EOF
+${C_BOLD}Usage:${C_RESET} $0 <domain> -o <output_file>
+
+${C_BOLD}Example:${C_RESET}
+  $0 anfcorp.com -o /tmp/anfcorp.txt
+EOF
+    exit 1
+}
+
+if [[ $# -lt 3 ]]; then
+    usage
+fi
+
+DOMAIN=""
+OUTPUT=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -o)
+            OUTPUT="$2"
+            shift 2
+            ;;
+        *)
+            DOMAIN="$1"
+            shift
+            ;;
+    esac
+done
+
+if [[ -z "$DOMAIN" || -z "$OUTPUT" ]]; then
+    usage
+fi
+
+mkdir -p "$CACHE_DIR"
+
+TMP_OUTPUT=$(mktemp)
+trap 'rm -f "$TMP_OUTPUT"' EXIT
+
+TOTAL_IPS=0
+
+printf '\n%s%sSNI Domain Scanner%s\n' "$C_BOLD" "$C_BLUE" "$C_RESET"
+printf '%sTarget:%s %s\n' "$C_BOLD" "$C_RESET" "$DOMAIN"
+echo
+
+for provider in "${!URLS[@]}"; do
+    URL="${URLS[$provider]}"
+    FILE="$CACHE_DIR/${provider}.txt"
+
+    printf '%s%-14s%s' "$C_BOLD" "$provider" "$C_RESET"
+
+    if [[ -f "$FILE" ]]; then
+        curl -fsSL -z "$FILE" -o "$FILE" "$URL" || true
+    else
+        printf ' %sdownloading...%s' "$C_DIM" "$C_RESET"
+        curl -fsSL -o "$FILE" "$URL"
+    fi
+
+    PROVIDER_MATCHES=0
+
+    while IFS= read -r line; do
+        IP=$(awk '{print $1}' <<< "$line")
+
+        DOMAINS=$(sed -n 's/.*\[\(.*\)\].*/\1/p' <<< "$line" \
+            | tr ' ' '\n' \
+            | sed '/^$/d')
+
+        COUNT=$(grep -Fic "$DOMAIN" <<< "$DOMAINS" || true)
+
+        if [[ "$COUNT" -gt 0 ]]; then
+            grep -Fi "$DOMAIN" <<< "$DOMAINS" >> "$TMP_OUTPUT"
+            TOTAL_IPS=$((TOTAL_IPS + 1))
+            PROVIDER_MATCHES=$((PROVIDER_MATCHES + COUNT))
+
+            printf '\n    %s%-15s%s %s(%s domain%s)%s' \
+                "$C_GREEN" "$IP" "$C_RESET" \
+                "$C_DIM" "$COUNT" "$([[ $COUNT -eq 1 ]] || echo es)" "$C_RESET"
+        fi
+    done < <(grep -Fi "$DOMAIN" "$FILE")
+
+    if [[ "$PROVIDER_MATCHES" -eq 0 ]]; then
+        printf '  %sno matches%s\n' "$C_DIM" "$C_RESET"
+    else
+        printf '\n  %s→ %d match%s total%s\n' \
+            "$C_GREEN" "$PROVIDER_MATCHES" "$([[ $PROVIDER_MATCHES -eq 1 ]] || echo es)" "$C_RESET"
+    fi
+done
+
+mkdir -p "$(dirname "$OUTPUT")"
+sort -u "$TMP_OUTPUT" > "$OUTPUT"
+UNIQUE_COUNT=$(wc -l < "$OUTPUT" | tr -d ' ')
+
+echo ''
+printf '%s%-16s%s %s\n' "$C_BOLD" "Matched IPs:"    "$C_RESET" "$TOTAL_IPS"
+printf '%s%-16s%s %s\n' "$C_BOLD" "Unique domains:" "$C_RESET" "$UNIQUE_COUNT"
+printf '%s%-16s%s %s\n' "$C_BOLD" "Saved to:"        "$C_RESET" "$OUTPUT"
+echo ''
+
+if [[ "$UNIQUE_COUNT" -eq 0 ]]; then
+    warn "No matches found for '$DOMAIN'."
+else
+    ok "Done. :)"
+fi

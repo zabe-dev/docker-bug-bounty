@@ -1,0 +1,11 @@
+services:
+  docker-bug-bounty:
+    build:
+      context: .
+      args:
+        GO_VERSION: "1.24.7"
+    image: docker-bug-bounty:latest
+    stdin_open: true
+    tty: true
+    volumes:
+      - ${BUG_BOUNTY_DIR:-$PWD}:/mnt
