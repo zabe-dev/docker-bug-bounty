@@ -10,7 +10,7 @@ ENV TZ=UTC \
     LC_ALL=C.UTF-8 \
     GOPATH=/home/bug-bounty/go \
     GOBIN=/home/bug-bounty/go/bin \
-    PATH=/home/bug-bounty/go/bin:/home/bug-bounty/.pdtm/go/bin:/opt/tools/sqlmap:/opt/tools/dirsearch:$PATH
+    PATH=/home/bug-bounty/go/bin:/home/bug-bounty/.pdtm/go/bin:/opt/tools/sqlmap:/opt/tools/dirsearch:/mnt/scripts:$PATH
 
 # System dependencies are kept in one layer and apt metadata is removed afterwards.
 RUN apt-get update \

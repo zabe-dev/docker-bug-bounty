@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+wordlists_root="${WORDLIST_ROOT:-/opt/wordlists}"
+query="${1:-}"
+
+if [[ -z "$query" ]]; then
+  echo "Usage: wordlist <name>" >&2
+  exit 2
+fi
+
+if [[ ! -d "$wordlists_root" ]]; then
+  echo "Wordlist directory not found: $wordlists_root" >&2
+  exit 1
+fi
+
+mapfile -t matches < <(find "$wordlists_root" -type f -iname "*${query}*.txt" -print | sort)
+
+if [[ "${#matches[@]}" -eq 0 ]]; then
+  echo "No .txt wordlists found matching: $query" >&2
+  exit 1
+fi
+
+printf '%s\n' "${matches[@]}"
