@@ -28,6 +28,7 @@ RUN apt-get update \
         jq \
         nmap \
         netcat-openbsd \
+        util-linux \
     && rm -rf /var/lib/apt/lists/* \
     && arch="$(dpkg --print-architecture)" \
     && case "$arch" in \
@@ -43,14 +44,11 @@ ENV PATH=/usr/local/go/bin:$PATH
 
 RUN groupadd --gid 10001 bug-bounty \
     && useradd --uid 10001 --gid 10001 --create-home --shell /bin/bash bug-bounty \
-    && mkdir -p /opt/tools /opt/wordlists /mnt \
-    && chown -R bug-bounty:bug-bounty /opt/tools /opt/wordlists /mnt /home/bug-bounty
+    && mkdir -p /opt/tools /mnt \
+    && chown -R bug-bounty:bug-bounty /opt/tools /mnt /home/bug-bounty
 
 USER bug-bounty
 WORKDIR /mnt
-
-RUN git clone --depth 1 --filter=blob:none --sparse https://github.com/danielmiessler/SecLists.git /opt/wordlists/SecLists \
-    && git -C /opt/wordlists/SecLists sparse-checkout set Discovery Fuzzing Passwords Usernames
 
 # Findomain publishes architecture-specific Linux release archives.
 RUN case "$(dpkg --print-architecture)" in \
@@ -88,4 +86,5 @@ RUN python3 -m venv /home/bug-bounty/.venv \
 COPY --chown=bug-bounty:bug-bounty --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint"]
+USER root
 CMD ["-l"]

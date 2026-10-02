@@ -9,3 +9,7 @@ services:
     tty: true
     volumes:
       - ${BUG_BOUNTY_DIR:-$PWD}:/mnt
+      - wordlists:/opt/wordlists
+
+volumes:
+  wordlists:
