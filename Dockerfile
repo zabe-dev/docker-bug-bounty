@@ -69,7 +69,8 @@ RUN case "$(dpkg --print-architecture)" in \
 RUN go install github.com/ffuf/ffuf/v2@latest \
     && go install github.com/tomnomnom/assetfinder@latest \
     && go install github.com/gwen001/github-subdomains@latest \
-    && go install github.com/trufflesecurity/trufflehog/v3@latest \
+    && curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh \
+      | sh -s -- -b /home/bug-bounty/go/bin \
     && go install github.com/sensepost/gowitness@latest \
     && go install github.com/projectdiscovery/pdtm/cmd/pdtm@latest \
     && pdtm -install-all
