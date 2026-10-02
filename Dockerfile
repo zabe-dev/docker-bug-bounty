@@ -58,7 +58,7 @@ RUN case "$(dpkg --print-architecture)" in \
       arm64) findomain_asset='findomain-aarch64.zip' ;; \
       *) echo "Unsupported architecture for Findomain" >&2; exit 1 ;; \
     esac \
-    && mkdir -p /tmp/findomain \
+    && mkdir -p /tmp/findomain /home/bug-bounty/go/bin \
     && curl -fsSL "https://github.com/findomain/findomain/releases/latest/download/${findomain_asset}" -o /tmp/findomain.zip \
     && unzip -q /tmp/findomain.zip -d /tmp/findomain \
     && install -m 0755 /tmp/findomain/findomain /home/bug-bounty/go/bin/findomain \
