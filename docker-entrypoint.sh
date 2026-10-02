@@ -9,6 +9,7 @@ if [[ ! -f /opt/wordlists/SecLists/Discovery/Web-Content/common.txt ]]; then
 fi
 
 mkdir -p /mnt/output
+chown bug-bounty:bug-bounty /mnt/output
 
 if [[ "$#" -eq 0 || "$1" == -* ]]; then
   exec runuser -u bug-bounty -- /bin/bash "$@"
