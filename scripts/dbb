@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BUG_BOUNTY_OUTPUT_DIR="$PWD/output" exec docker compose \
+  -f /opt/zb/development/repos/docker-bug-bounty/compose.yaml \
+  run --rm docker-bug-bounty "$@"

@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+"""Collect and classify historical URLs for a domain.
+
+External collectors (waymore, waybackurls, and optionally katana) are kept as
+separate commands so the analyzer can be used with the existing container tool
+chain. Results are written to the requested output directory.
+"""
+import argparse
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from urllib.parse import parse_qs, unquote, urlparse
+
+import jwt
+import requests
+
+VERSION = "1.0"
+START_TIME = time.time()
+
+
+class C:
+    CYAN = "\033[96m"; GREEN = "\033[92m"; YELLOW = "\033[93m"
+    RED = "\033[91m"; RESET = "\033[0m"; BOLD = "\033[1m"; DIM = "\033[2m"
+
+
+class Config:
+    REQUEST_DELAY = 1.5
+    MAX_RETRIES = 3
+    RATE_LIMIT_PAUSE = 300
+    HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; wayplus/1.0)"}
+    JWT = re.compile(r"eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}")
+    JUICY = {"email", "username", "password", "api_key", "access_token", "session_id", "role", "scope"}
+    SECRET = re.compile(r"[?&](code|token|ticket|key|secret|password|pass|pwd|auth|session|sid|jwt|bearer|access_token|refresh_token|api_key|apikey|client_secret|private_key|oauth|callback|redirect|redirect_uri|state|nonce)=", re.I)
+    API = re.compile(r"^https?://api\.|^https?://[^/]+/api(?:/v[0-9]+)?|/graphql|/graphiql|/playground|/api/v[0-9]+|/v[1-6]/graphql|\.api\.", re.I)
+    STATIC = re.compile(r"\.(js|css|txt|json|xml|pdf|docx?|xlsx?|pptx?|zip|tar|gz|rar|7z|exe|dmg|pkg|deb|rpm|iso|img|svg|ico|woff2?|ttf|eot|otf|mp3|mp4|wav|avi|mov|wmv|flv|webm|ogg|png|jpe?g|gif|bmp|tiff|webp)(\?.*)?$", re.I)
+    DEFAULT_EXTENSIONS = [".zip", ".tar.gz", ".rar", ".sql", ".bak", ".7z", ".gz"]
+
+
+def stop_on_signal(signum, _frame):
+    print(f"\n[{C.YELLOW}WRN{C.RESET}] Scan interrupted ({time.time() - START_TIME:.3f}s elapsed)")
+    raise SystemExit(130)
+
+
+signal.signal(signal.SIGINT, stop_on_signal)
+signal.signal(signal.SIGTERM, stop_on_signal)
+
+
+def load_file(path, default=None):
+    try:
+        return [line.strip() for line in Path(path).read_text().splitlines() if line.strip()]
+    except FileNotFoundError:
+        return list(default or [])
+
+
+def save_file(path, lines):
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_text("\n".join(lines) + ("\n" if lines else ""))
+
+
+def run_command(command, input_text=None, timeout=3600):
+    try:
+        result = subprocess.run(command, input=input_text, capture_output=True, text=True, timeout=timeout)
+    except FileNotFoundError:
+        print(f"[{C.RED}ERR{C.RESET}] Required command not found: {command[0]}")
+        return None
+    except subprocess.TimeoutExpired:
+        print(f"[{C.RED}ERR{C.RESET}] {command[0]} timed out")
+        return None
+    if result.returncode:
+        print(f"[{C.RED}ERR{C.RESET}] {command[0]} failed")
+        return None
+    return result.stdout.splitlines()
+
+
+def fetch_waymore(target, output_dir):
+    output = Path(output_dir) / "urls.txt"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    command = ["waymore", "-mode", "U", "-t", "5", "-p", "2", "-lr", "60", "-r", "5", "-oU", str(output), "-i", target]
+    run_command(command)
+    urls = load_file(output)
+    print(f"[{C.GREEN}SUC{C.RESET}] [waymore] Found {C.BOLD}{len(urls)}{C.RESET} URLs")
+    return urls
+
+
+def fetch_waybackurls(target, output_dir):
+    lines = run_command(["waybackurls"], target + "\n") or []
+    urls = [line.strip() for line in lines if line.strip()]
+    if urls:
+        save_file(Path(output_dir) / "waybackurls.txt", urls)
+    print(f"[{C.GREEN}SUC{C.RESET}] [waybackurls] Found {C.BOLD}{len(urls)}{C.RESET} URLs")
+    return urls
+
+
+def crawl(target, output_dir, depth):
+    lines = run_command(["katana", "-u", f"https://{target}", "-d", str(depth), "-jc", "-kf", "all", "-silent", "-nc", "-rl", "150", "-c", "10"]) or []
+    urls = list(dict.fromkeys(line.strip() for line in lines if line.strip()))
+    if urls:
+        save_file(Path(output_dir) / "katana.txt", urls)
+    print(f"[{C.GREEN}SUC{C.RESET}] [katana] Found {C.BOLD}{len(urls)}{C.RESET} unique URLs")
+    return urls
+
+
+def retry_get(url, timeout=30):
+    for attempt in range(Config.MAX_RETRIES):
+        try:
+            response = requests.get(url, headers=Config.HEADERS, timeout=timeout)
+            if response.status_code == 429:
+                time.sleep(Config.RATE_LIMIT_PAUSE); continue
+            response.raise_for_status(); return response
+        except requests.RequestException:
+            if attempt + 1 < Config.MAX_RETRIES:
+                time.sleep(Config.REQUEST_DELAY * (2 ** attempt))
+    return None
+
+
+def jwt_from_url(url):
+    for values in parse_qs(urlparse(url).query).values():
+        for value in values:
+            match = Config.JWT.search(unquote(value))
+            if match: return match.group(0)
+    match = Config.JWT.search(unquote(url))
+    return match.group(0) if match else None
+
+
+def analyze_jwts(urls, output_dir):
+    found = {url: jwt_from_url(url) for url in urls}
+    found = {url: token for url, token in found.items() if token}
+    def live(url):
+        try:
+            response = requests.head(url, headers=Config.HEADERS, allow_redirects=True, timeout=10)
+            return url if response.status_code in (200, 301, 302) else None
+        except requests.RequestException:
+            return None
+    results = {}
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        for url in filter(None, pool.map(live, found)):
+            try:
+                decoded = jwt.decode(found[url], options={"verify_signature": False})
+                results[url] = {"jwt": found[url], "decoded": decoded, "juicy": {k: v for k, v in decoded.items() if k in Config.JUICY}}
+            except Exception:
+                pass
+    if results:
+        (Path(output_dir) / "jwt.json").write_text(json.dumps(results, indent=2) + "\n")
+    return len(results)
+
+
+def analyze(urls, target, output_dir):
+    root = target.lower().split(":")[0]
+    groups = {
+        "subdomains": sorted({m.group(1).lower() for u in urls if (m := re.search(r"https?://([a-zA-Z0-9.-]+)", u)) and m.group(1).lower().endswith(root)}),
+        "parameters": [u for u in urls if re.search(r"\?[^#]+=[^#]*", u)],
+        "secret": [u for u in urls if Config.SECRET.search(u)],
+        "apis": [u for u in urls if Config.API.search(u) and not Config.STATIC.search(u)],
+        "static": [u for u in urls if Config.STATIC.search(u)],
+        "json": [u for u in urls if "json" in u.lower()],
+        "config": [u for u in urls if "conf" in u.lower()],
+    }
+    for name, values in groups.items():
+        values = list(dict.fromkeys(values)); groups[name] = values
+        if values: save_file(Path(output_dir) / f"{name if name != 'static' else 'static'}.txt", values)
+        print(f"[{C.GREEN}+{C.RESET}] {name}: {len(values)} found")
+    groups["jwt"] = analyze_jwts(urls, output_dir)
+    extensions = load_file("extensions.txt", Config.DEFAULT_EXTENSIONS)
+    archive = retry_get(f"https://web.archive.org/cdx/search/cdx?url=*.{target}/*&output=txt&fl=original&collapse=urlkey&page=/", 60)
+    compressed = [u for u in (archive.text.splitlines() if archive else []) if any(u.lower().endswith(x.lower()) for x in extensions)]
+    if compressed: save_file(Path(output_dir) / "compressed.txt", compressed)
+    groups["compressed"] = len(compressed)
+    print(f"[{C.GREEN}+{C.RESET}] compressed: {len(compressed)} found")
+    return groups
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Wayback URL Analyzer")
+    parser.add_argument("-d", required=True, metavar="example.com", help="Target domain")
+    parser.add_argument("-output", required=True, metavar="output_dir", help="Output directory")
+    parser.add_argument("-c", nargs="?", const=3, type=int, metavar="depth", help="Also crawl with katana")
+    args = parser.parse_args()
+    target, output = args.d.strip(), args.output.strip()
+    Path(output).mkdir(parents=True, exist_ok=True)
+    urls = fetch_waymore(target, output) + fetch_waybackurls(target, output)
+    if args.c is not None: urls += crawl(target, output, max(args.c, 1))
+    urls = list(dict.fromkeys(urls)); save_file(Path(output) / "combined.txt", urls)
+    print(f"[{C.CYAN}INF{C.RESET}] Found total of {len(urls)} unique URLs")
+    analyze(urls, target, output)
+    print(f"[{C.CYAN}INF{C.RESET}] Results saved to: {output} ({time.time() - START_TIME:.3f}s elapsed)")
+
+
+if __name__ == "__main__":
+    main()

@@ -66,6 +66,7 @@ RUN case "$(dpkg --print-architecture)" in \
 # the bug-bounty user's .pdtm directory, which is included in PATH above.
 RUN go install github.com/ffuf/ffuf/v2@latest \
     && go install github.com/tomnomnom/assetfinder@latest \
+    && go install github.com/tomnomnom/waybackurls@latest \
     && go install github.com/gwen001/github-subdomains@latest \
     && curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh \
       | sh -s -- -b /home/bug-bounty/go/bin \
@@ -76,6 +77,7 @@ RUN go install github.com/ffuf/ffuf/v2@latest \
 # Keep the Python tools isolated from Ubuntu's system Python.
 RUN python3 -m venv /home/bug-bounty/.venv \
     && /home/bug-bounty/.venv/bin/pip install --no-cache-dir --upgrade pip \
+    && /home/bug-bounty/.venv/bin/pip install --no-cache-dir waymore PyJWT requests \
     && git clone --depth 1 https://github.com/sqlmapproject/sqlmap.git /opt/tools/sqlmap \
     && git clone --depth 1 https://github.com/maurosoria/dirsearch.git /opt/tools/dirsearch \
     && /home/bug-bounty/.venv/bin/pip install --no-cache-dir -r /opt/tools/dirsearch/requirements.txt \
@@ -83,6 +85,9 @@ RUN python3 -m venv /home/bug-bounty/.venv \
     && printf '#!/bin/sh\nexec /home/bug-bounty/.venv/bin/python /opt/tools/dirsearch/dirsearch.py "$@"\n' > /opt/tools/dirsearch/dirsearch \
     && chmod +x /opt/tools/sqlmap/sqlmap /opt/tools/dirsearch/dirsearch
 
+ENV PATH=/opt/dbb-scripts:/home/bug-bounty/.venv/bin:$PATH
+
+COPY --chown=bug-bounty:bug-bounty --chmod=755 scripts /opt/dbb-scripts
 COPY --chown=bug-bounty:bug-bounty --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint"]

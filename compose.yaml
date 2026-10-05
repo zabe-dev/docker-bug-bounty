@@ -8,7 +8,7 @@ services:
     stdin_open: true
     tty: true
     volumes:
-      - ${BUG_BOUNTY_DIR:-$PWD}:/mnt
+      - ${BUG_BOUNTY_OUTPUT_DIR:-$PWD/output}:/mnt/output
       - wordlists:/opt/wordlists
 
 volumes:
