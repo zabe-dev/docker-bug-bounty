@@ -16,6 +16,7 @@ dbb ffuf -u https://example.com/FUZZ \
   -w /opt/wordlists/SecLists/Discovery/Web-Content/common.txt
 dbb dirsearch -u https://example.com \
   -w /opt/wordlists/SecLists/Discovery/Web-Content/common.txt
+dbb gau example.com
 ```
 
 SecLists is stored in a persistent Docker volume at `/opt/wordlists/SecLists`.

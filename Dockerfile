@@ -67,6 +67,7 @@ RUN case "$(dpkg --print-architecture)" in \
 RUN go install github.com/ffuf/ffuf/v2@latest \
     && go install github.com/tomnomnom/assetfinder@latest \
     && go install github.com/tomnomnom/waybackurls@latest \
+    && go install github.com/lc/gau/v2/cmd/gau@latest \
     && go install github.com/gwen001/github-subdomains@latest \
     && curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh \
       | sh -s -- -b /home/bug-bounty/go/bin \
@@ -85,9 +86,12 @@ RUN python3 -m venv /home/bug-bounty/.venv \
     && printf '#!/bin/sh\nexec /home/bug-bounty/.venv/bin/python /opt/tools/dirsearch/dirsearch.py "$@"\n' > /opt/tools/dirsearch/dirsearch \
     && chmod +x /opt/tools/sqlmap/sqlmap /opt/tools/dirsearch/dirsearch
 
-ENV PATH=/opt/dbb-scripts:/home/bug-bounty/.venv/bin:$PATH
+# ProjectDiscovery and Python both provide a command named `httpx`; jscollect
+# requires ProjectDiscovery's Go binary.
+ENV PATH=/opt/dbb-scripts:/home/bug-bounty/.pdtm/go/bin:/home/bug-bounty/go/bin:/home/bug-bounty/.venv/bin:$PATH
 
 COPY --chown=bug-bounty:bug-bounty --chmod=755 scripts /opt/dbb-scripts
+COPY --chown=bug-bounty:bug-bounty .gau.toml /home/bug-bounty/.gau.toml
 COPY --chown=bug-bounty:bug-bounty --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint"]
